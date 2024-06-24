@@ -1,13 +1,13 @@
 import copy
 import os
-import torch
-import numpy as np
-from tqdm.autonotebook import tqdm
-from torch.optim.lr_scheduler import _LRScheduler
-import matplotlib.pyplot as plt
-from torch.utils.data import DataLoader
 
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
 from packaging import version
+from torch.optim.lr_scheduler import _LRScheduler
+from torch.utils.data import DataLoader
+from tqdm.autonotebook import tqdm
 
 PYTORCH_VERSION = version.parse(torch.__version__)
 
@@ -15,12 +15,14 @@ PYTORCH_VERSION = version.parse(torch.__version__)
 AVAILABLE_AMP_BACKENDS = []
 try:
     import apex.amp
+
     AVAILABLE_AMP_BACKENDS.append("apex")
 except ImportError:
     pass
 
 try:
     import torch.amp
+
     AVAILABLE_AMP_BACKENDS.append("torch")
 except ImportError:
     pass
@@ -348,9 +350,7 @@ class LRFinder(object):
                 non_blocking_transfer=non_blocking_transfer,
             )
             if val_loader:
-                loss = self._validate(
-                    val_iter, non_blocking_transfer=non_blocking_transfer
-                )
+                loss = self._validate(val_iter, non_blocking_transfer=non_blocking_transfer)
 
             # Update the learning rate
             self.history["lr"].append(lr_schedule.get_lr()[0])
@@ -378,8 +378,7 @@ class LRFinder(object):
             new_lrs = [new_lrs] * len(self.optimizer.param_groups)
         if len(new_lrs) != len(self.optimizer.param_groups):
             raise ValueError(
-                "Length of `new_lrs` is not equal to the number of parameter groups "
-                + "in the given optimizer"
+                "Length of `new_lrs` is not equal to the number of parameter groups " + "in the given optimizer"
             )
 
         for param_group, new_lr in zip(self.optimizer.param_groups, new_lrs):
@@ -397,18 +396,16 @@ class LRFinder(object):
         self.optimizer.zero_grad()
         for i in range(accumulation_steps):
             inputs, labels = next(train_iter)
-            inputs, labels = self._move_to_device(
-                inputs, labels, non_blocking=non_blocking_transfer
-            )
+            inputs, labels = self._move_to_device(inputs, labels, non_blocking=non_blocking_transfer)
 
             # Forward pass
             if self.amp_backend == "torch":
                 with torch.amp.autocast(**self.amp_config):
-                    outputs = self.model(inputs)
-                    loss = self.criterion(outputs, labels)
+                    loss_dict = self.model(inputs, labels)
+                    loss = sum(loss for loss in loss_dict.values())
             else:
-                outputs = self.model(inputs)
-                loss = self.criterion(outputs, labels)
+                loss_dict = self.model(inputs, labels)
+                loss = sum(loss for loss in loss_dict.values())
 
             # Loss should be averaged in each step
             loss /= accumulation_steps
@@ -455,17 +452,15 @@ class LRFinder(object):
     def _validate(self, val_iter, non_blocking_transfer=True):
         # Set model to evaluation mode and disable gradient computation
         running_loss = 0
-        self.model.eval()
-        with torch.no_grad():
+        self.model.train()
+        with torch.no_grad(), torch.inference_mode():
             for inputs, labels in val_iter:
                 # Move data to the correct device
-                inputs, labels = self._move_to_device(
-                    inputs, labels, non_blocking=non_blocking_transfer
-                )
+                inputs, labels = self._move_to_device(inputs, labels, non_blocking=non_blocking_transfer)
 
                 # Forward pass and loss computation
-                outputs = self.model(inputs)
-                loss = self.criterion(outputs, labels)
+                loss_dict = self.model(inputs, labels)
+                loss = sum(loss for loss in loss_dict.values())
                 running_loss += loss.item() * len(labels)
 
         return running_loss / len(val_iter.dataset)
@@ -537,11 +532,9 @@ class LRFinder(object):
             try:
                 min_grad_idx = (np.gradient(np.array(losses))).argmin()
             except ValueError:
-                print(
-                    "Failed to compute the gradients, there might not be enough points."
-                )
+                print("Failed to compute the gradients, there might not be enough points.")
             if min_grad_idx is not None:
-                print("Suggested LR: {:.2E}".format(lrs[min_grad_idx]))
+                print("Suggested steepest LR: {:.2E}".format(lrs[min_grad_idx]))
                 ax.scatter(
                     lrs[min_grad_idx],
                     losses[min_grad_idx],
@@ -552,6 +545,20 @@ class LRFinder(object):
                     label="steepest gradient",
                 )
                 ax.legend()
+
+            # 'max_before_divergence': the point with the maximum lr before the loss starts exploding
+            min_idx = np.argmin(losses)
+            print("Suggested max LR: {:.2E}".format(lrs[min_idx]))
+            ax.scatter(
+                lrs[min_idx],
+                losses[min_idx],
+                s=75,
+                marker="o",
+                color="green",
+                zorder=3,
+                label="minimum loss",
+            )
+            ax.legend()
 
         if log_lr:
             ax.set_xscale("log")
@@ -566,7 +573,7 @@ class LRFinder(object):
             plt.show()
 
         if suggest_lr and min_grad_idx is not None:
-            return ax, lrs[min_grad_idx]
+            return ax, lrs[min_grad_idx], lrs[min_idx]
         else:
             return ax
 
@@ -669,9 +676,7 @@ class StateCacher(object):
         else:
             fn = self.cached.get(key)
             if not os.path.exists(fn):
-                raise RuntimeError(
-                    "Failed to load state in {}. File doesn't exist anymore.".format(fn)
-                )
+                raise RuntimeError("Failed to load state in {}. File doesn't exist anymore.".format(fn))
             state_dict = torch.load(fn, map_location=lambda storage, location: storage)
             return state_dict
 
