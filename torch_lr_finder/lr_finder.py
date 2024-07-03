@@ -1,4 +1,5 @@
 import copy
+import json
 import os
 
 import matplotlib.pyplot as plt
@@ -341,6 +342,7 @@ class LRFinder(object):
                     "Expected types are `torch.utils.data.DataLoader`"
                     "or child of `ValDataLoaderIter`.".format(type(val_loader))
                 )
+            self.history["train_loss"] = []
 
         for iteration in tqdm(range(num_iter)):
             # Train on batch and retrieve loss
@@ -350,6 +352,7 @@ class LRFinder(object):
                 non_blocking_transfer=non_blocking_transfer,
             )
             if val_loader:
+                self.history["train_loss"].append(loss)
                 loss = self._validate(val_iter, non_blocking_transfer=non_blocking_transfer)
 
             # Update the learning rate
@@ -473,6 +476,7 @@ class LRFinder(object):
         show_lr=None,
         ax=None,
         suggest_lr=True,
+        use_validation_loss=True,
     ):
         """Plots the learning rate range test.
 
@@ -492,6 +496,8 @@ class LRFinder(object):
             suggest_lr (bool, optional): suggest a learning rate by
                 - 'steepest': the point with steepest gradient (minimal gradient)
                 you can use that point as a first guess for an LR. Default: True.
+            use_validation_loss (bool, optional): if True, will plot the validation
+                loss if available. Default: True.
 
         Returns:
             The matplotlib.axes.Axes object that contains the plot,
@@ -508,7 +514,10 @@ class LRFinder(object):
         # Get the data to plot from the history dictionary. Also, handle skip_end=0
         # properly so the behaviour is the expected
         lrs = self.history["lr"]
-        losses = self.history["loss"]
+        if not use_validation_loss and "train_loss" in self.history.keys():
+            losses = self.history["train_loss"]
+        else:
+            losses = self.history["loss"]
         if skip_end == 0:
             lrs = lrs[skip_start:]
             losses = losses[skip_start:]
@@ -576,6 +585,14 @@ class LRFinder(object):
             return ax, lrs[min_grad_idx], lrs[min_idx]
         else:
             return ax
+
+    def save(self, path):
+        with open(path, "w") as f:
+            json.dump(self.history, f, indent=2)
+
+    def load(self, path):
+        with open(path, "r") as f:
+            self.history = json.load(f)
 
 
 class LinearLR(_LRScheduler):
