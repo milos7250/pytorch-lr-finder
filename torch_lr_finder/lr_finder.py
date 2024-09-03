@@ -215,7 +215,7 @@ class LRFinder(object):
         train_loader,
         val_loader=None,
         start_lr=None,
-        end_lr=10,
+        end_lr=10.0,
         num_iter=100,
         step_mode="exp",
         smooth_f=0.05,
